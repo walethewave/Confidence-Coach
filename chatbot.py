@@ -3,111 +3,118 @@ from models import UserMessage, ChatSession, ConfidenceResponse
 from prompts import ConfidencePromptEngine
 import os
 from dotenv import load_dotenv
-import json
 import re
 
 load_dotenv()
 
+
 class ConfidenceChatbot:
     def __init__(self):
-        genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
+        api_key = os.getenv('GEMINI_API_KEY')
+        print(f"🔑 Loaded API key: {api_key[:4]}***" if api_key else "❌ GEMINI_API_KEY not found")
+        genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-pro')
         self.prompt_engine = ConfidencePromptEngine()
         self.session = ChatSession()
-    
-    def assess_confidence_level(self, message: str) -> int:
-        """Assess user's confidence level from their message"""
-        assessment_prompt = self.prompt_engine.get_confidence_assessment_prompt(message)
-        try:
-            response = self.model.generate_content(assessment_prompt)
-            actual_text = response.candidates[0].content.parts[0].text  # ✅ FIXED
-            confidence_match = re.search(r'confidence level.*?(\d+)', actual_text.lower())
-            if confidence_match:
-                return min(max(int(confidence_match.group(1)), 1), 10)
-            return 5  # Default if parsing fails
-        except Exception as e:
-            print(f"Confidence assess error: {e}")
-            return 5
 
     def generate_response(self, user_message: UserMessage) -> ConfidenceResponse:
-        """Generate confidence-building response"""
-        confidence_level = self.assess_confidence_level(user_message.content)
-        context = self._get_context()
+        """Assess confidence + generate response in ONE call"""
+
+        # Build unified prompt
         main_prompt = f"""
-        {self.prompt_engine.get_system_prompt()}
-        {self.prompt_engine.get_few_shot_examples()}
-        {self.prompt_engine.get_response_prompt(user_message.content, confidence_level, context)}
-        """
+{self.prompt_engine.get_system_prompt()}
+
+{self.prompt_engine.get_few_shot_examples()}
+
+User message: "{user_message.content}"
+
+Provide ALL of the following clearly:
+1️⃣ Confidence Level (1-10): e.g. Confidence Level: 7
+2️⃣ Main Response: a warm empowering answer using the CONFIDENCE framework (150-250 words)
+3️⃣ 2-3 Confidence Tips: as bullet points
+4️⃣ 2-3 Next Steps: as bullet points
+"""
+
         try:
+            print("🚀 Calling Gemini API...")
             response = self.model.generate_content(main_prompt)
-            actual_text = response.candidates[0].content.parts[0].text  # ✅ FIXED
+            print("✅ Raw Gemini response:", response.text)
 
-            tips = self._extract_tips(actual_text)
-            next_steps = self._extract_next_steps(actual_text)
+            text = response.text
 
+            # Extract confidence level
+            level_match = re.search(r'Confidence Level\s*[:\-]?\s*(\d+)', text, re.IGNORECASE)
+            confidence_level = int(level_match.group(1)) if level_match else 5
+            confidence_level = min(max(confidence_level, 1), 10)
+
+            # Extract main response
+            main_response = re.split(r'Confidence Tips|Tips|Next Steps', text, 1)[0].strip()
+
+            # Extract tips
+            tips = re.findall(r'[-•*]\s*(.+)', text)
+            if len(tips) > 5:  # assume first 2-3 are tips, next 2-3 are steps
+                tips_split = len(tips) // 2
+                confidence_tips = tips[:tips_split]
+                next_steps = tips[tips_split:]
+            else:
+                confidence_tips = tips[:3] if tips else ["Focus on your strengths"]
+                next_steps = tips[3:6] if len(tips) > 3 else ["Take one small step"]
+
+            # Log session
             self.session.messages.append({
                 "user": user_message.content,
-                "assistant": actual_text,
+                "assistant": main_response,
                 "confidence_level": confidence_level,
                 "timestamp": user_message.timestamp.isoformat()
             })
 
             return ConfidenceResponse(
-                response=actual_text,
-                confidence_tips=tips,
+                response=main_response,
+                confidence_tips=confidence_tips,
                 next_steps=next_steps,
                 motivation_score=min(confidence_level + 2, 10),
                 emotional_tone="empowering"
             )
 
         except Exception as e:
-            print(f"Generate response error: {e}")
+            print(f"❌ Gemini error: {e}")
             return self._fallback_response(str(e))
 
-    
-    def _get_context(self) -> str:
-        """Get conversation context from recent messages"""
-        if len(self.session.messages) == 0:
-            return "This is the start of our conversation."
-        
-        recent_messages = self.session.messages[-3:]  # Last 3 exchanges
-        context = "Previous conversation:\n"
-        for msg in recent_messages:
-            context += f"User: {msg['user']}\nAssistant: {msg['assistant'][:100]}...\n"
-        return context
-    
-    def _extract_tips(self, response: str) -> list:
-        """Extract tips from response"""
-        # Look for numbered lists or bullet points
-        tips = re.findall(r'(?:\d+\.|•)\s*([^.\n]+)', response)
-        return tips[:3] if tips else ["Focus on your strengths", "Take small steps", "Celebrate progress"]
-    
-    def _extract_next_steps(self, response: str) -> list:
-        """Extract actionable next steps"""
-        steps = re.findall(r'(?:step|action|do|try).*?:?\s*([^.\n]+)', response.lower())
-        return steps[:3] if steps else ["Set one small goal", "Practice self-compassion", "Take action today"]
-    
     def _fallback_response(self, error: str) -> ConfidenceResponse:
-        """Provide fallback response if API fails"""
+        """Default fallback"""
+        print(f"⚠️ Using fallback due to error: {error}")
         return ConfidenceResponse(
-            response="I believe in your ability to overcome any challenge! Sometimes the strongest people face the toughest moments, but that's exactly what makes you resilient. What's one small step you can take today toward feeling more confident?",
-            confidence_tips=["You are stronger than you think", "Every expert was once a beginner", "Your worth isn't determined by perfection"],
-            next_steps=["Take one small action", "Practice self-kindness", "Focus on growth, not perfection"],
+            response=(
+                "I believe in your ability to overcome any challenge! "
+                "Sometimes the strongest people face the toughest moments, "
+                "but that's exactly what makes you resilient. "
+                "What's one small step you can take today toward feeling more confident?"
+            ),
+            confidence_tips=[
+                "You are stronger than you think",
+                "Every expert was once a beginner",
+                "Your worth isn't determined by perfection"
+            ],
+            next_steps=[
+                "Take one small action",
+                "Practice self-kindness",
+                "Focus on growth, not perfection"
+            ],
             motivation_score=7,
             emotional_tone="supportive"
         )
 
     def get_session_summary(self) -> dict:
-        """Get session analytics"""
+        """Session stats"""
         if not self.session.messages:
             return {"message": "No conversation yet"}
-        
+
         confidence_levels = [msg.get("confidence_level", 5) for msg in self.session.messages]
-        avg_confidence = sum(confidence_levels) / len(confidence_levels)
-        
+        avg_conf = sum(confidence_levels) / len(confidence_levels)
+
         return {
             "total_messages": len(self.session.messages),
-            "average_confidence": round(avg_confidence, 1),
+            "average_confidence": round(avg_conf, 1),
             "confidence_trend": "improving" if confidence_levels[-1] > confidence_levels[0] else "stable",
             "session_duration": "Active session"
         }

@@ -7,58 +7,47 @@ import re
 
 load_dotenv()
 
-
 class ConfidenceChatbot:
     def __init__(self):
         api_key = os.getenv('GEMINI_API_KEY')
-        print(f"🔑 Loaded API key: {api_key[:4]}***" if api_key else "❌ GEMINI_API_KEY not found")
+        if not api_key:
+            raise ValueError("❌ GEMINI_API_KEY not found in .env")
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-pro')
         self.prompt_engine = ConfidencePromptEngine()
         self.session = ChatSession()
 
     def generate_response(self, user_message: UserMessage) -> ConfidenceResponse:
-        """Assess confidence + generate response in ONE call"""
+        full_prompt = (
+            self.prompt_engine.get_system_prompt()
+            + "\n"
+            + self.prompt_engine.get_few_shot_examples()
+            + "\n"
+            + self.prompt_engine.get_response_prompt(user_message.content)
+        )
 
-        # Build unified prompt
-        main_prompt = f"""
-{self.prompt_engine.get_system_prompt()}
-
-{self.prompt_engine.get_few_shot_examples()}
-
-User message: "{user_message.content}"
-
-Provide ALL of the following clearly:
-1️⃣ Confidence Level (1-10): e.g. Confidence Level: 7
-2️⃣ Main Response: a warm empowering answer using the CONFIDENCE framework (150-250 words)
-3️⃣ 2-3 Confidence Tips: as bullet points
-4️⃣ 2-3 Next Steps: as bullet points
-"""
+        print("🚀 Prompt sent to Gemini:\n", full_prompt[:500], "...")
 
         try:
-            print("🚀 Calling Gemini API...")
-            response = self.model.generate_content(main_prompt)
-            print("✅ Raw Gemini response:", response.text)
-
+            response = self.model.generate_content(full_prompt)
             text = response.text
+            print("✅ Gemini raw response:\n", text)
 
-            # Extract confidence level
+            # Extract sections
             level_match = re.search(r'Confidence Level\s*[:\-]?\s*(\d+)', text, re.IGNORECASE)
             confidence_level = int(level_match.group(1)) if level_match else 5
             confidence_level = min(max(confidence_level, 1), 10)
 
-            # Extract main response
-            main_response = re.split(r'Confidence Tips|Tips|Next Steps', text, 1)[0].strip()
+            main_response_match = re.search(r'Main Response:\s*(.*?)(Confidence Tips:)', text, re.DOTALL | re.IGNORECASE)
+            main_response = main_response_match.group(1).strip() if main_response_match else text.strip()
 
-            # Extract tips
-            tips = re.findall(r'[-•*]\s*(.+)', text)
-            if len(tips) > 5:  # assume first 2-3 are tips, next 2-3 are steps
-                tips_split = len(tips) // 2
-                confidence_tips = tips[:tips_split]
-                next_steps = tips[tips_split:]
-            else:
-                confidence_tips = tips[:3] if tips else ["Focus on your strengths"]
-                next_steps = tips[3:6] if len(tips) > 3 else ["Take one small step"]
+            tips_match = re.search(r'Confidence Tips:\s*(.*?)(Next Steps:)', text, re.DOTALL | re.IGNORECASE)
+            tips_section = tips_match.group(1).strip() if tips_match else ""
+            confidence_tips = re.findall(r'-\s*(.+)', tips_section)
+
+            steps_match = re.search(r'Next Steps:\s*(.*)', text, re.DOTALL | re.IGNORECASE)
+            steps_section = steps_match.group(1).strip() if steps_match else ""
+            next_steps = re.findall(r'-\s*(.+)', steps_section)
 
             # Log session
             self.session.messages.append({
@@ -70,48 +59,32 @@ Provide ALL of the following clearly:
 
             return ConfidenceResponse(
                 response=main_response,
-                confidence_tips=confidence_tips,
-                next_steps=next_steps,
+                confidence_tips=confidence_tips[:3],
+                next_steps=next_steps[:3],
                 motivation_score=min(confidence_level + 2, 10),
                 emotional_tone="empowering"
             )
 
         except Exception as e:
             print(f"❌ Gemini error: {e}")
-            return self._fallback_response(str(e))
+            return self._fallback_response()
 
-    def _fallback_response(self, error: str) -> ConfidenceResponse:
-        """Default fallback"""
-        print(f"⚠️ Using fallback due to error: {error}")
+    def _fallback_response(self) -> ConfidenceResponse:
         return ConfidenceResponse(
-            response=(
-                "I believe in your ability to overcome any challenge! "
-                "Sometimes the strongest people face the toughest moments, "
-                "but that's exactly what makes you resilient. "
-                "What's one small step you can take today toward feeling more confident?"
-            ),
-            confidence_tips=[
-                "You are stronger than you think",
-                "Every expert was once a beginner",
-                "Your worth isn't determined by perfection"
-            ],
-            next_steps=[
-                "Take one small action",
-                "Practice self-kindness",
-                "Focus on growth, not perfection"
-            ],
+            response="I believe in your ability to overcome any challenge! "
+                     "Let's focus on one small step you can take today to grow your confidence.",
+            confidence_tips=["You are stronger than you think", "Your journey is unique", "Progress over perfection"],
+            next_steps=["Write one small win", "Speak kindly to yourself", "Celebrate daily effort"],
             motivation_score=7,
             emotional_tone="supportive"
         )
 
     def get_session_summary(self) -> dict:
-        """Session stats"""
         if not self.session.messages:
             return {"message": "No conversation yet"}
 
         confidence_levels = [msg.get("confidence_level", 5) for msg in self.session.messages]
         avg_conf = sum(confidence_levels) / len(confidence_levels)
-
         return {
             "total_messages": len(self.session.messages),
             "average_confidence": round(avg_conf, 1),

@@ -18,60 +18,52 @@ class ConfidenceChatbot:
     def assess_confidence_level(self, message: str) -> int:
         """Assess user's confidence level from their message"""
         assessment_prompt = self.prompt_engine.get_confidence_assessment_prompt(message)
-        
         try:
             response = self.model.generate_content(assessment_prompt)
-            # Extract confidence level using regex
-            confidence_match = re.search(r'confidence level.*?(\d+)', response.text.lower())
+            actual_text = response.candidates[0].content.parts[0].text  # ✅ FIXED
+            confidence_match = re.search(r'confidence level.*?(\d+)', actual_text.lower())
             if confidence_match:
                 return min(max(int(confidence_match.group(1)), 1), 10)
-            return 5  # Default middle confidence
-        except:
+            return 5  # Default if parsing fails
+        except Exception as e:
+            print(f"Confidence assess error: {e}")
             return 5
-    
+
     def generate_response(self, user_message: UserMessage) -> ConfidenceResponse:
         """Generate confidence-building response"""
-        
-        # Assess confidence level
         confidence_level = self.assess_confidence_level(user_message.content)
-        
-        # Get conversation context
         context = self._get_context()
-        
-        # Create main prompt
         main_prompt = f"""
         {self.prompt_engine.get_system_prompt()}
-        
         {self.prompt_engine.get_few_shot_examples()}
-        
         {self.prompt_engine.get_response_prompt(user_message.content, confidence_level, context)}
         """
-        
         try:
             response = self.model.generate_content(main_prompt)
-            
-            # Extract structured information
-            tips = self._extract_tips(response.text)
-            next_steps = self._extract_next_steps(response.text)
-            
-            # Store in session
+            actual_text = response.candidates[0].content.parts[0].text  # ✅ FIXED
+
+            tips = self._extract_tips(actual_text)
+            next_steps = self._extract_next_steps(actual_text)
+
             self.session.messages.append({
                 "user": user_message.content,
-                "assistant": response.text,
+                "assistant": actual_text,
                 "confidence_level": confidence_level,
                 "timestamp": user_message.timestamp.isoformat()
             })
-            
+
             return ConfidenceResponse(
-                response=response.text,
+                response=actual_text,
                 confidence_tips=tips,
                 next_steps=next_steps,
                 motivation_score=min(confidence_level + 2, 10),
                 emotional_tone="empowering"
             )
-            
+
         except Exception as e:
+            print(f"Generate response error: {e}")
             return self._fallback_response(str(e))
+
     
     def _get_context(self) -> str:
         """Get conversation context from recent messages"""

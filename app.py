@@ -29,9 +29,10 @@ st.set_page_config(
 
 @st.cache_data
 def load_custom_css() -> str:
-    """Load and return custom CSS styles"""
+    """Load and return custom CSS styles with dark mode support"""
     return """
     <style>
+        /* Light mode styles */
         .main-header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             padding: 1.5rem;
@@ -51,10 +52,12 @@ def load_custom_css() -> str:
         .user-message {
             background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
             border-left: 4px solid #2196f3;
+            color: #333;
         }
         .bot-message {
             background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
             border-left: 4px solid #9c27b0;
+            color: #333;
         }
         .confidence-meter {
             background: linear-gradient(90deg, #ff6b6b, #feca57, #48dbfb, #0abde3);
@@ -97,6 +100,44 @@ def load_custom_css() -> str:
         }
         .pulse-animation {
             animation: pulse 0.5s ease-in-out;
+        }
+
+        /* Dark mode styles */
+        @media (prefers-color-scheme: dark) {
+            .main-header {
+                background: linear-gradient(135deg, #4e5bb4 0%, #5a3f7f 100%);
+                color: #e0e0e0;
+            }
+            .chat-message {
+                box-shadow: 0 2px 10px rgba(255,255,255,0.1);
+            }
+            .user-message {
+                background: linear-gradient(135deg, #2a3b5b 0%, #3b2a5b 100%);
+                color: #e0e0e0;
+                border-left: 4px solid #42a5f5;
+            }
+            .bot-message {
+                background: linear-gradient(135deg, #2d2d2d 0%, #3a3a3a 100%);
+                color: #e0e0e0;
+                border-left: 4px solid #ce93d8;
+            }
+            .metric-card {
+                background: #2d2d2d;
+                color: #e0e0e0;
+            }
+            .error-message {
+                background-color: #5c2d2d;
+                border-left: 4px solid #f44336;
+                color: #e0e0e0;
+            }
+            /* Ensure timestamp is visible */
+            .chat-message div[style*="color: #666"] {
+                color: #b0b0b0 !important;
+            }
+            /* Ensure emojis are visible */
+            .chat-message strong {
+                color: #e0e0e0;
+            }
         }
     </style>
     """
@@ -290,42 +331,58 @@ def render_sidebar():
             [⭐ Star on GitHub](https://github.com/walethewave/Confidence-Coach)
             """)
 
+import html
+
+import html
+from datetime import datetime
+from typing import Dict, Any
+import streamlit as st
+import logging
+
 def render_chat_message(message: Dict[str, Any], message_index: int):
-    """Render individual chat message with enhanced styling"""
+    """Render individual chat message with safe HTML structure"""
     try:
+        # Get timestamp (always a string)
+        timestamp = message.get("timestamp", datetime.now().strftime("%H:%M"))
+        if isinstance(timestamp, datetime):
+            timestamp = timestamp.strftime("%H:%M")
+
+        # Escape user content to prevent breaking the HTML
+        content = html.escape(message["content"])
+
+        # Build HTML based on role
         if message["role"] == "user":
-            st.markdown(f"""
-            <div class="chat-message user-message">
-                <strong>🙋‍♀️ You:</strong> {message["content"]}
-                <div style="font-size: 0.8em; color: #666; margin-top: 0.5rem;">
-                    {datetime.now().strftime("%H:%M")}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            html_block = f"""
+<div class="chat-message user-message">
+    <strong>🙋‍♀️ You:</strong> <span>{content}</span>
+    <div style="font-size: 0.8em; color: #666; margin-top: 0.5rem;">{timestamp}</div>
+</div>
+"""
         else:
-            st.markdown(f"""
-            <div class="chat-message bot-message">
-                <strong>🤖 ConfidenceAI:</strong> {message["content"]}
-                <div style="font-size: 0.8em; color: #666; margin-top: 0.5rem;">
-                    {datetime.now().strftime("%H:%M")}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Enhanced expandable sections
+            html_block = f"""
+<div class="chat-message bot-message">
+    <strong>🤖 ConfidenceAI:</strong> <span>{content}</span>
+    <div style="font-size: 0.8em; color: #666; margin-top: 0.5rem;">{timestamp}</div>
+</div>
+"""
+
+        # Render safe HTML block
+        st.markdown(html_block, unsafe_allow_html=True)
+
+        # Render optional expanders for bot messages
+        if message["role"] != "user":
             col1, col2 = st.columns(2)
             with col1:
                 if "tips" in message and message["tips"]:
                     with st.expander("💡 Confidence Tips", expanded=False):
                         for i, tip in enumerate(message["tips"], 1):
                             st.markdown(f"**{i}.** {tip}")
-            
             with col2:
                 if "next_steps" in message and message["next_steps"]:
                     with st.expander("🎯 Next Steps", expanded=False):
                         for i, step in enumerate(message["next_steps"], 1):
                             st.markdown(f"**{i}.** {step}")
-    
+
     except Exception as e:
         logger.error(f"Error rendering message {message_index}: {e}")
         st.error("Error displaying message")
@@ -333,11 +390,11 @@ def render_chat_message(message: Dict[str, Any], message_index: int):
 def process_user_input(user_input: str) -> bool:
     """Process user input and generate response"""
     try:
-        # Add user message
+        # Add user message with timestamp as string
         st.session_state.messages.append({
             "role": "user", 
             "content": user_input,
-            "timestamp": datetime.now()
+            "timestamp": datetime.now().strftime("%H:%M")  # Store as string
         })
         
         # Generate response with error handling
@@ -350,14 +407,14 @@ def process_user_input(user_input: str) -> bool:
             confidence_level = getattr(response, 'confidence_level', DEFAULT_CONFIDENCE_LEVEL)
             st.session_state.confidence_history.append(confidence_level)
             
-            # Add bot response
+            # Bot response with timestamp as string
             bot_message = {
                 "role": "assistant",
                 "content": response.response,
                 "tips": getattr(response, 'confidence_tips', []),
                 "next_steps": getattr(response, 'next_steps', []),
                 "confidence_level": confidence_level,
-                "timestamp": datetime.now()
+                "timestamp": datetime.now().strftime("%H:%M")  # Store as string
             }
             st.session_state.messages.append(bot_message)
             

@@ -55,8 +55,8 @@ While I'm having a technical moment, here's what I want you to remember: every c
 
 Take a deep breath. You've overcome difficulties before, and you have everything within you to handle whatever comes next.
 
-What's one small thing you can do today to take care of yourself?"""
-    
+What's one small thing you can do today to take care of yourself, make sure you do it till I'm back online?"""
+
     def _assess_confidence(self, user_message: str) -> ConfidenceAssessment:
         """Analyze user message for confidence indicators"""
         assessment_prompt = self.prompt_engine.get_confidence_assessment_prompt(user_message)
@@ -110,15 +110,14 @@ What's one small thing you can do today to take care of yourself?"""
         elif any(word in text_lower for word in ['great', 'excellent', 'amazing', 'fantastic']):
             return 9
         
-        return 5  # Default middle ground
+        return 5  
     
     def generate_response(self, user_message: UserMessage) -> AIResponse:
         """Generate a complete confidence coaching response"""
         try:
-            # Step 1: Assess confidence level
+            
             assessment = self._assess_confidence(user_message.content)
             
-            # Step 2: Generate main response
             context = self._build_context()
             response_prompt = self.prompt_engine.get_response_prompt(
                 user_message.content, 
@@ -126,7 +125,7 @@ What's one small thing you can do today to take care of yourself?"""
                 context
             )
             
-            # Add system prompt for consistency
+            # i added system prompt for consistency
             full_prompt = f"""
             {self.prompt_engine.get_system_prompt()}
             
@@ -135,17 +134,17 @@ What's one small thing you can do today to take care of yourself?"""
             
             ai_response_text = self._make_ai_request(full_prompt)
             
-            # Step 3: Create structured response
+             # structured response
             ai_response = AIResponse(
                 response=ai_response_text,
                 confidence_level=assessment.confidence_level,
                 assessment=assessment
             )
             
-            # Step 4: Extract tips and steps from response
+            # Extract tips and steps from response
             ai_response.extract_tips_and_steps()
             
-            # Step 5: Update session tracking
+            # Update session tracking
             self.session.add_message("user", user_message.content)
             self.session.add_message("assistant", ai_response.response, assessment.confidence_level)
             
@@ -215,7 +214,6 @@ What's one small thing you can do today to take care of yourself?"""
 # Helper function for testing
 def create_test_chatbot() -> ConfidenceChatbot:
     """Create a chatbot instance for testing"""
-    # You'll need to set your GEMINI_API_KEY environment variable
     return ConfidenceChatbot()
 
 if __name__ == "__main__":

@@ -116,5 +116,5 @@ class PromptData(BaseModel):
     context: str = ""
     
     class Config:
-        # Allow extra fields for flexibility
+       
         extra = "allow"

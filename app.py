@@ -77,7 +77,7 @@ with st.sidebar:
         
         # Confidence trend chart
         if len(st.session_state.messages) > 0:
-            confidence_data = [5, 6, 7, 8]  # Sample data - replace with actual tracking
+            confidence_data = [5, 6, 7, 8]  
             fig = go.Figure(data=go.Scatter(
                 x=list(range(1, len(confidence_data) + 1)),
                 y=confidence_data,
@@ -118,7 +118,7 @@ with st.sidebar:
     - Real-time Confidence Tracking
     - Personalized Coaching
     
-    [⭐ Star on GitHub](https://github.com/your-username/confidence-builder-chatbot)
+    [⭐ Star on GitHub](https://github.com/walethewave/Confidence-Coach)
     """)
 
 # Main chat interface

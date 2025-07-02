@@ -3,6 +3,8 @@ from chatbot import ConfidenceChatbot
 from models import UserMessage
 import plotly.graph_objects as go
 import time
+from dotenv import load_dotenv
+load_dotenv()
 
 # Page config
 st.set_page_config(

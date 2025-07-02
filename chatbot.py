@@ -1,124 +1,232 @@
 import google.generativeai as genai
-from models import UserMessage, ChatSession, ConfidenceResponse
-from prompts import ConfidencePromptEngine
 import os
+import json
+import logging
+from typing import Optional
+from models import UserMessage, AIResponse, ConfidenceAssessment, ChatSession, PromptData
+from prompts import ConfidencePromptEngine
 from dotenv import load_dotenv
-import re
-
 load_dotenv()
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 class ConfidenceChatbot:
-    def __init__(self):
-        api_key = os.getenv('GEMINI_API_KEY')
-        if not api_key:
-            raise ValueError("❌ GEMINI_API_KEY not found in .env")
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-2.0-flash')
-
-        self.prompt_engine = ConfidencePromptEngine()
+    """
+    Main chatbot class that handles confidence coaching conversations
+    """
+    
+    def __init__(self, api_key: Optional[str] = None):
+        """Initialize the chatbot with Gemini AI"""
+        # Get API key from environment or parameter
+        self.api_key = api_key or os.getenv('GEMINI_API_KEY')
+        if not self.api_key:
+            raise ValueError("Gemini API key is required. Set GEMINI_API_KEY environment variable.")
+        
+        # Configure Gemini
+        genai.configure(api_key=self.api_key)
+        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # Initialize session tracking
         self.session = ChatSession()
+        self.prompt_engine = ConfidencePromptEngine()
+        
+        logger.info("ConfidenceChatbot initialized successfully")
+    
+    def _make_ai_request(self, prompt: str, max_retries: int = 3) -> str:
+        """Make request to Gemini AI with error handling"""
+        for attempt in range(max_retries):
+            try:
+                response = self.model.generate_content(prompt)
+                return response.text
+            except Exception as e:
+                logger.warning(f"AI request attempt {attempt + 1} failed: {str(e)}")
+                if attempt == max_retries - 1:
+                    return self._get_fallback_response()
+        
+        return self._get_fallback_response()
+    
+    def _get_fallback_response(self) -> str:
+        """Fallback response when AI fails"""
+        return """I hear you, and I want you to know that reaching out takes courage. 🌟 
 
-    def generate_response(self, user_message: UserMessage) -> ConfidenceResponse:
-        prompt = (
-            self.prompt_engine.get_system_prompt() +
-            self.prompt_engine.get_few_shot_examples() +
-            self.prompt_engine.get_main_prompt(user_message.content)
-        )
-    def generate_response(self, user_message: UserMessage) -> ConfidenceResponse:
-        """Generate a confidence-building response using the CONFIDENCE framework"""
+While I'm having a technical moment, here's what I want you to remember: every challenge you're facing right now is temporary, but your strength is permanent.
 
-        # 1️⃣ --- Estimate or default confidence level ---
-        # (You can replace this later with an actual analysis step if you want)
-        confidence_level = 5  # Basic default
+Take a deep breath. You've overcome difficulties before, and you have everything within you to handle whatever comes next.
 
-        # 2️⃣ --- Build the full master prompt properly ---
-        main_prompt = (
-            self.prompt_engine.get_system_prompt()
-            + "\n"
-            + self.prompt_engine.get_few_shot_examples()
-            + "\n"
-            + self.prompt_engine.get_response_prompt(
-                user_message.content,
-                confidence_level
-            )
-        )
-
+What's one small thing you can do today to take care of yourself?"""
+    
+    def _assess_confidence(self, user_message: str) -> ConfidenceAssessment:
+        """Analyze user message for confidence indicators"""
+        assessment_prompt = self.prompt_engine.get_confidence_assessment_prompt(user_message)
+        
         try:
-            print("🚀 Calling Gemini API...")
-            response = self.model.generate_content(main_prompt)
-            print("✅ Raw Gemini response:", response.text)
-
-            text = response.text
-
-            # Extract confidence level if possible
-            import re
-            level_match = re.search(r'Confidence Level\s*[:\-]?\s*(\d+)', text, re.IGNORECASE)
-            if level_match:
-                confidence_level = int(level_match.group(1))
-                confidence_level = min(max(confidence_level, 1), 10)
-
-            # Basic split: tips and steps come from bullet points
-            tips = re.findall(r'[-•*]\s*(.+)', text)
-            if len(tips) > 5:
-                split = len(tips) // 2
-                confidence_tips = tips[:split]
-                next_steps = tips[split:]
+            response = self._make_ai_request(assessment_prompt)
+            
+            # Try to parse JSON response
+            if response.strip().startswith('{'):
+                return ConfidenceAssessment.from_json_string(response)
             else:
-                confidence_tips = tips[:3] if tips else ["Keep believing in yourself."]
-                next_steps = tips[3:6] if len(tips) > 3 else ["Take one small action today."]
-
-            # Main response (remove tips/steps from text)
-            main_response = re.split(r'(Confidence Tips|Tips|Next Steps)', text, 1)[0].strip()
-
-            # Save to session
-            self.session.messages.append({
-                "user": user_message.content,
-                "assistant": main_response,
-                "confidence_level": confidence_level,
-                "timestamp": user_message.timestamp.isoformat()
-            })
-
-            return ConfidenceResponse(
-                response=main_response,
-                confidence_tips=confidence_tips,
-                next_steps=next_steps,
-                motivation_score=min(confidence_level + 2, 10),
-                emotional_tone="empowering"
-            )
-
+                # If not JSON, extract confidence level from text
+                confidence_level = self._extract_confidence_from_text(response)
+                return ConfidenceAssessment(
+                    confidence_level=confidence_level,
+                    emotional_state="processing",
+                    main_challenge="general confidence",
+                    hidden_strengths="self-awareness and courage to reach out",
+                    best_approach="supportive encouragement"
+                )
+                
         except Exception as e:
-            print(f"❌ Gemini error: {e}")
-            return self._fallback_response(str(e))
-
-
-    def _fallback_response(self, error: str) -> ConfidenceResponse:
-        print(f"⚠️ Fallback: {error}")
-        return ConfidenceResponse(
-            response="I believe in you! Let’s find one small step to build your confidence today.",
-            confidence_tips=[
-                "You are stronger than you think",
-                "Take one small action",
-                "Celebrate small wins"
-            ],
-            next_steps=[
-                "Write down 1 thing you did well today",
-                "Practice self-compassion",
-                "Share your progress with a friend"
-            ],
-            motivation_score=7,
-            emotional_tone="supportive"
-        )
-
+            logger.error(f"Assessment failed: {str(e)}")
+            return ConfidenceAssessment(
+                confidence_level=5,
+                emotional_state="uncertain",
+                main_challenge="unknown",
+                hidden_strengths="resilience",
+                best_approach="gentle support"
+            )
+    
+    def _extract_confidence_from_text(self, text: str) -> int:
+        """Extract confidence level from text response"""
+        # Look for numbers 1-10 in the text
+        import re
+        numbers = re.findall(r'\b([1-9]|10)\b', text)
+        
+        if numbers:
+            return int(numbers[0])
+        
+        # Fallback based on keywords
+        text_lower = text.lower()
+        if any(word in text_lower for word in ['very low', 'terrible', 'awful', 'hopeless']):
+            return 2
+        elif any(word in text_lower for word in ['low', 'down', 'struggling', 'difficult']):
+            return 4
+        elif any(word in text_lower for word in ['okay', 'fine', 'average', 'neutral']):
+            return 5
+        elif any(word in text_lower for word in ['good', 'positive', 'better', 'confident']):
+            return 7
+        elif any(word in text_lower for word in ['great', 'excellent', 'amazing', 'fantastic']):
+            return 9
+        
+        return 5  # Default middle ground
+    
+    def generate_response(self, user_message: UserMessage) -> AIResponse:
+        """Generate a complete confidence coaching response"""
+        try:
+            # Step 1: Assess confidence level
+            assessment = self._assess_confidence(user_message.content)
+            
+            # Step 2: Generate main response
+            context = self._build_context()
+            response_prompt = self.prompt_engine.get_response_prompt(
+                user_message.content, 
+                assessment.confidence_level, 
+                context
+            )
+            
+            # Add system prompt for consistency
+            full_prompt = f"""
+            {self.prompt_engine.get_system_prompt()}
+            
+            {response_prompt}
+            """
+            
+            ai_response_text = self._make_ai_request(full_prompt)
+            
+            # Step 3: Create structured response
+            ai_response = AIResponse(
+                response=ai_response_text,
+                confidence_level=assessment.confidence_level,
+                assessment=assessment
+            )
+            
+            # Step 4: Extract tips and steps from response
+            ai_response.extract_tips_and_steps()
+            
+            # Step 5: Update session tracking
+            self.session.add_message("user", user_message.content)
+            self.session.add_message("assistant", ai_response.response, assessment.confidence_level)
+            
+            logger.info(f"Generated response for confidence level: {assessment.confidence_level}")
+            return ai_response
+            
+        except Exception as e:
+            logger.error(f"Response generation failed: {str(e)}")
+            
+            # Return fallback response
+            fallback_response = AIResponse(
+                response=self._get_fallback_response(),
+                confidence_level=5,
+                confidence_tips=[
+                    "Take one small step forward today",
+                    "Remember that setbacks are temporary",
+                    "You're stronger than you think"
+                ],
+                next_steps=[
+                    "Practice deep breathing for 2 minutes",
+                    "Write down one thing you're grateful for",
+                    "Reach out to someone who supports you"
+                ]
+            )
+            
+            self.session.add_message("user", user_message.content)
+            self.session.add_message("assistant", fallback_response.response, 5)
+            
+            return fallback_response
+    
+    def _build_context(self) -> str:
+        """Build context from recent conversation history"""
+        if len(self.session.messages) < 2:
+            return "This is the beginning of our conversation."
+        
+        # Get last few messages for context
+        recent_messages = self.session.messages[-4:]  # Last 4 messages
+        context_parts = []
+        
+        for msg in recent_messages:
+            role = "User" if msg["role"] == "user" else "You"
+            context_parts.append(f"{role}: {msg['content'][:100]}...")
+        
+        return "Recent conversation context:\n" + "\n".join(context_parts)
+    
     def get_session_summary(self) -> dict:
-        if not self.session.messages:
-            return {"message": "No conversation yet"}
-
-        levels = [msg.get("confidence_level", 5) for msg in self.session.messages]
-        avg = sum(levels) / len(levels)
-
+        """Get current session analytics"""
+        return self.session.get_session_summary()
+    
+    def reset_session(self):
+        """Reset the chat session"""
+        self.session = ChatSession()
+        logger.info("Session reset")
+    
+    def get_confidence_history(self) -> list:
+        """Get confidence level history for charting"""
+        return self.session.get_confidence_trend()
+    
+    def export_session(self) -> dict:
+        """Export session data for analysis"""
         return {
-            "total_messages": len(self.session.messages),
-            "average_confidence": round(avg, 1),
-            "confidence_trend": "improving" if levels[-1] > levels[0] else "stable",
-            "session_duration": "Active session"
+            "session_summary": self.get_session_summary(),
+            "full_conversation": self.session.messages,
+            "confidence_progression": self.session.confidence_history
         }
+
+# Helper function for testing
+def create_test_chatbot() -> ConfidenceChatbot:
+    """Create a chatbot instance for testing"""
+    # You'll need to set your GEMINI_API_KEY environment variable
+    return ConfidenceChatbot()
+
+if __name__ == "__main__":
+    # Quick test
+    try:
+        bot = create_test_chatbot()
+        test_message = UserMessage(content="I'm feeling nervous about my presentation tomorrow")
+        response = bot.generate_response(test_message)
+        print("Response:", response.response)
+        print("Confidence Level:", response.confidence_level)
+        print("Tips:", response.confidence_tips)
+    except Exception as e:
+        print(f"Test failed: {e}")
+        print("Make sure to set your GEMINI_API_KEY environment variable")
